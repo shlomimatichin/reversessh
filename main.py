@@ -35,6 +35,9 @@ setupIncomingServiceCmd.add_argument("--conf", required=True)
 setupIncomingServiceCmd.add_argument("--portRemote", type=int, required=True)
 incomingServiceCmd = subparsers.add_parser("incomingService")
 incomingServiceCmd.add_argument("--conf", default="/etc/reversessh.conf")
+linkCmd = subparsers.add_parser("link")
+linkCmd.add_argument("--conf", default="reversessh.conf")
+linkCmd.add_argument("--portRemote", type=int, required=True)
 args = parser.parse_args()
 
 
@@ -60,6 +63,14 @@ def sshKeygen():
 
 
 def incomingConnection(conf, portRemote):
+    ssh(conf, ["-R", "%d:localhost:22" % portRemote])
+
+
+def outgoingConnection(conf, portRemote):
+    ssh(conf, ['-L', '%d:localhost:%d' % (portRemote, portRemote)])
+
+
+def ssh(conf, additionalCli):
     hostsFile = tempfile.NamedTemporaryFile(mode="w")
     hostsFile.write("[%s]:%d %s\n" % (conf['server'], conf['port'], conf['serverKey']))
     hostsFile.flush()
@@ -72,9 +83,9 @@ def incomingConnection(conf, portRemote):
         "-i", privateKeyFile.name,
         "%s@%s" % (conf['username'], conf['server']),
         "-o", "TCPKeepAlive=yes", "-o", "ServerAliveInterval=5",
-        "-o", "GlobalKnownHostsFile=%s" % hostsFile.name,
-        "-R", "%d:localhost:22" % portRemote])
-    print("Reverse ssh started")
+        "-o", "GlobalKnownHostsFile=%s" % hostsFile.name] +
+        additionalCli)
+    print("SSH started")
     signal.signal(signal.SIGTERM, lambda *args: sys.exit(10))
     signal.signal(signal.SIGINT, lambda *args: sys.exit(10))
     atexit.register(lambda *args: child.terminate())
@@ -153,5 +164,9 @@ elif args.cmd == "incomingService":
         except:
             logging.exception("Connection failed")
         time.sleep(5)
+elif args.cmd == "link":
+    with open(args.conf) as f:
+        conf = json.load(f)
+    outgoingConnection(conf, args.portRemote)
 else:
     raise AssertionError("Unknown command: %s" % args.cmd)
