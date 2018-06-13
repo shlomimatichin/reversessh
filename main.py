@@ -9,6 +9,10 @@ import json
 import base64
 import subprocess
 import tempfile
+import time
+import logging
+import atexit
+import signal
 
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="cmd")
@@ -26,6 +30,11 @@ createConfCmd.add_argument("--output", default="reversessh.conf")
 testIncomingCmd = subparsers.add_parser("testIncoming")
 testIncomingCmd.add_argument("--conf", default="reversessh.conf")
 testIncomingCmd.add_argument("--portRemote", type=int, default=2000)
+setupIncomingServiceCmd = subparsers.add_parser("setupIncomingService")
+setupIncomingServiceCmd.add_argument("--conf", required=True)
+setupIncomingServiceCmd.add_argument("--portRemote", type=int, required=True)
+incomingServiceCmd = subparsers.add_parser("incomingService")
+incomingServiceCmd.add_argument("--conf", default="/etc/reversessh.conf")
 args = parser.parse_args()
 
 
@@ -48,6 +57,48 @@ def sshKeygen():
         return dict(public=public, private=private)
     finally:
         os.unlink(hostsFile)
+
+
+def incomingConnection(conf, portRemote):
+    hostsFile = tempfile.NamedTemporaryFile(mode="w")
+    hostsFile.write("[%s]:%d %s\n" % (conf['server'], conf['port'], conf['serverKey']))
+    hostsFile.flush()
+    privateKeyFile = tempfile.NamedTemporaryFile(mode="w", dir="/dev/shm")
+    os.fchmod(privateKeyFile.fileno(), 0o600)
+    privateKeyFile.write(conf['key'])
+    privateKeyFile.flush()
+    child = subprocess.Popen(["ssh",
+        "-p", str(conf['port']),
+        "-i", privateKeyFile.name,
+        "%s@%s" % (conf['username'], conf['server']),
+        "-o", "TCPKeepAlive=yes", "-o", "ServerAliveInterval=5",
+        "-o", "GlobalKnownHostsFile=%s" % hostsFile.name,
+        "-R", "%d:localhost:22" % portRemote])
+    print("Reverse ssh started")
+    signal.signal(signal.SIGTERM, lambda *args: sys.exit(10))
+    signal.signal(signal.SIGINT, lambda *args: sys.exit(10))
+    atexit.register(lambda *args: child.terminate())
+    child.wait()
+
+
+SERVICE_FILE = r'''
+[Unit]
+Description=ReverseSSH incoming connection
+After=network.target auditd.service
+ConditionPathExists=!/etc/reverse_ssh_not_to_be_run
+
+[Service]
+EnvironmentFile=-/etc/default/ssh
+ExecStart=/usr/bin/python3 /usr/sbin/reversessh.py incomingService
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=simple
+
+[Install]
+WantedBy=multi-user.target
+Alias=reversessh.service
+'''
 
 
 if args.cmd == "setupServer":
@@ -73,19 +124,34 @@ elif args.cmd == "createConf":
 elif args.cmd == "testIncoming":
     with open(args.conf) as f:
         conf = json.load(f)
-    hostsFile = tempfile.NamedTemporaryFile(mode="w")
-    hostsFile.write("[%s]:%d %s\n" % (conf['server'], conf['port'], conf['serverKey']))
-    hostsFile.flush()
-    privateKeyFile = tempfile.NamedTemporaryFile(mode="w", dir="/dev/shm")
-    os.fchmod(privateKeyFile.fileno(), 0o600)
-    privateKeyFile.write(conf['key'])
-    privateKeyFile.flush()
-    subprocess.check_call(["ssh",
-        "-p", str(conf['port']),
-        "-i", privateKeyFile.name,
-        "%s@%s" % (conf['username'], conf['server']),
-        "-o", "TCPKeepAlive=yes", "-o", "ServerAliveInterval=5",
-        "-o", "GlobalKnownHostsFile=%s" % hostsFile.name,
-        "-R", "%d:localhost:22" % args.portRemote])
+    incomingConnection(conf, args.portRemote)
+elif args.cmd == "setupIncomingService":
+    if os.getuid() != 0:
+        raise Exception("Must be run as sudo")
+    with open(args.conf) as f:
+        conf = json.load(f)
+    conf['portRemote'] = args.portRemote
+    with open("/etc/reversessh.conf", "w") as f:
+        os.fchmod(f.fileno(), 0o600)
+        f.write(json.dumps(conf, indent=4))
+    with open(__file__) as f:
+        myself = f.read()
+    with open("/usr/sbin/reversessh.py", "w") as f:
+        os.fchmod(f.fileno(), 0o755)
+        f.write(myself)
+    with open("/lib/systemd/system/reversessh.service", "w") as f:
+        f.write(SERVICE_FILE)
+    subprocess.check_output(['systemctl', 'daemon-reload'])
+    subprocess.check_output(['systemctl', 'enable', 'reversessh.service'])
+    subprocess.check_output(['systemctl', 'restart', 'reversessh.service'])
+elif args.cmd == "incomingService":
+    with open(args.conf) as f:
+        conf = json.load(f)
+    while True:
+        try:
+            incomingConnection(conf, conf['portRemote'])
+        except:
+            logging.exception("Connection failed")
+        time.sleep(5)
 else:
     raise AssertionError("Unknown command: %s" % args.cmd)
