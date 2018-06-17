@@ -27,6 +27,7 @@ createConfCmd.add_argument("--serverSudoUsername", default="ubuntu")
 createConfCmd.add_argument("--username", default="reversessh")
 createConfCmd.add_argument("--port", type=int, required=True)
 createConfCmd.add_argument("--output", default="reversessh.conf")
+createConfCmd.add_argument("--comment", required=True)
 testIncomingCmd = subparsers.add_parser("testIncoming")
 testIncomingCmd.add_argument("--conf", default="reversessh.conf")
 testIncomingCmd.add_argument("--portRemote", type=int, default=2000)
@@ -37,7 +38,7 @@ incomingServiceCmd = subparsers.add_parser("incomingService")
 incomingServiceCmd.add_argument("--conf", default="/etc/reversessh.conf")
 linkCmd = subparsers.add_parser("link")
 linkCmd.add_argument("--conf", default="reversessh.conf")
-linkCmd.add_argument("--portRemote", type=int, required=True)
+linkCmd.add_argument("--portRemote", type=int, required=True, nargs="+")
 args = parser.parse_args()
 
 
@@ -67,7 +68,10 @@ def incomingConnection(conf, portRemote):
 
 
 def outgoingConnection(conf, portRemote):
-    ssh(conf, ['-L', '%d:localhost:%d' % (portRemote, portRemote)])
+    extra = []
+    for port in portRemote:
+        extra += ['-L', '%d:localhost:%d' % (port, port)]
+    ssh(conf, extra)
 
 
 def ssh(conf, additionalCli):
@@ -120,7 +124,8 @@ elif args.cmd == "createConf":
         raise Exception("Will not override output file")
     keys = sshKeygen()
     response = runRemoteScript("installsshkey", username=args.username,
-        publicBase64=base64.b64encode(keys['public'].encode()).decode())
+        publicBase64=base64.b64encode(keys['public'].encode()).decode(),
+        commentBase64=base64.b64encode(args.comment.encode()).decode())
     print(response)
     serverKey = response.split("SERVER KEY START")[1].split("SERVER KEY END")[0].strip()
     with open(args.output, "w", 0o600) as f:

@@ -11,9 +11,11 @@ import base64
 parser = argparse.ArgumentParser()
 parser.add_argument("--username", default="reversessh")
 parser.add_argument("--publicBase64", required=True)
+parser.add_argument("--commentBase64", required=True)
 args = parser.parse_args()
 
 with open("/tmp/key", "wb") as f:
+    f.write(("#" + base64.b64decode(args.commentBase64).decode() + "\n").encode())
     f.write(base64.b64decode(args.publicBase64))
 subprocess.check_output(['sudo', 'su', '-', args.username, '-c', 'cat /tmp/key >> ~/.ssh/authorized_keys'])
 with open("/home/%s/ssh_host_rsa_key.pub" % args.username, "r") as f:
