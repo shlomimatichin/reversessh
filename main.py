@@ -13,6 +13,7 @@ import time
 import logging
 import atexit
 import signal
+import random
 
 parser = argparse.ArgumentParser()
 subparsers = parser.add_subparsers(dest="cmd")
@@ -36,6 +37,7 @@ setupIncomingServiceCmd.add_argument("--conf", required=True)
 setupIncomingServiceCmd.add_argument("--portRemote", type=int, required=True)
 incomingServiceCmd = subparsers.add_parser("incomingService")
 incomingServiceCmd.add_argument("--conf", default="/etc/reversessh.conf")
+incomingServiceCmd.add_argument("--deviceRegexWhenNoDefaultRoute")
 linkCmd = subparsers.add_parser("link")
 linkCmd.add_argument("--conf", default="reversessh.conf")
 linkCmd.add_argument("--portRemote", type=int, required=True, nargs="+")
@@ -64,7 +66,24 @@ def sshKeygen():
 
 
 def incomingConnection(conf, portRemote):
-    ssh(conf, ["-R", "%d:localhost:22" % portRemote])
+    route = []
+    output = subprocess.check_output(["ip", "route", "show"]).decode()
+    if 'default via' in output:
+        print("Found default route")
+    else:
+        if args.deviceRegexWhenNoDefaultRoute:
+            options = [line for line in output.split("\n")
+                    if re.search("dev " + args.deviceRegexWhenNoDefaultRoute, line) is not None]
+            if len(options) > 0:
+                line = options[random.randrange(0, len(options))]
+                sourceAddress = re.search(r"src (\d+\.\d+\.\d+\.\d+)", line).group(1)
+                route = ['-b', sourceAddress]
+                print("Attempting to use %s as source address" % sourceAddress)
+            else:
+                raise Exception("No route and no deviceRegexWhenNoDefaultRoute devices")
+        else:
+            raise Exception("No route")
+    ssh(conf, route + ["-R", "%d:localhost:22" % portRemote])
 
 
 def outgoingConnection(conf, portRemote):
@@ -83,6 +102,7 @@ def ssh(conf, additionalCli):
     privateKeyFile.write(conf['key'])
     privateKeyFile.flush()
     child = subprocess.Popen(["ssh",
+        '-N',
         "-p", str(conf['port']),
         "-i", privateKeyFile.name,
         "%s@%s" % (conf['username'], conf['server']),

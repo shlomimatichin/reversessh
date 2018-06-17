@@ -25,9 +25,11 @@ X11Forwarding no
 PrintMotd no
 AcceptEnv LANG LC_*
 AllowUsers %(username)s
-ForceCommand sleep 1000000000
+ForceCommand echo No commands
 HostKey /home/%(username)s/ssh_host_rsa_key
 PidFile /home/%(username)s/daemon.pid
+ClientAliveInterval 5
+ClientAliveCountMax 1
 '''
 
 
