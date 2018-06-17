@@ -38,6 +38,7 @@ setupIncomingServiceCmd.add_argument("--portRemote", type=int, required=True)
 incomingServiceCmd = subparsers.add_parser("incomingService")
 incomingServiceCmd.add_argument("--conf", default="/etc/reversessh.conf")
 incomingServiceCmd.add_argument("--deviceRegexWhenNoDefaultRoute")
+incomingServiceCmd.add_argument("--suspendWhilePidLivesFile", default="/etc/reversessh.suspend.pidfile")
 linkCmd = subparsers.add_parser("link")
 linkCmd.add_argument("--conf", default="reversessh.conf")
 linkCmd.add_argument("--portRemote", type=int, required=True, nargs="+")
@@ -129,11 +130,23 @@ KillMode=process
 Restart=on-failure
 RestartPreventExitStatus=255
 Type=simple
+TimeoutStopSec=10
 
 [Install]
 WantedBy=multi-user.target
 Alias=reversessh.service
 '''
+
+
+def killPreviousSSH(conf):
+    lines = subprocess.check_output(["ps", "-Af"]).decode().strip().split("\n")
+    for line in lines:
+        if 'ssh' not in line:
+            continue
+        if ("%s@%s" % (conf['username'], conf['server'])) not in line:
+            continue
+        pid = int(re.findall(r"\w+", line)[1])
+        os.kill(pid, signal.SIGTERM)
 
 
 if args.cmd == "setupServer":
@@ -183,6 +196,15 @@ elif args.cmd == "setupIncomingService":
 elif args.cmd == "incomingService":
     with open(args.conf) as f:
         conf = json.load(f)
+    killPreviousSSH(conf)
+    if os.path.exists(args.suspendWhilePidLivesFile):
+        with open(args.suspendWhilePidLivesFile) as f:
+            pid = int(f.read().strip())
+        print("Suspended, waiting for PID %s to die" % pid)
+        while os.path.exists("/proc/%d" % pid):
+            time.sleep(2)
+        print("Pid %d died, resuming reversessh" % pid)
+        os.unlink(args.suspendWhilePidLivesFile)
     while True:
         try:
             incomingConnection(conf, conf['portRemote'])
