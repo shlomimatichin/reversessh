@@ -42,6 +42,7 @@ incomingServiceCmd.add_argument("--suspendWhilePidLivesFile", default="/etc/reve
 linkCmd = subparsers.add_parser("link")
 linkCmd.add_argument("--conf", default="reversessh.conf")
 linkCmd.add_argument("--portRemote", type=int, required=True, nargs="+")
+linkCmd.add_argument("--deviceRegexWhenNoDefaultRoute")
 args = parser.parse_args()
 
 
@@ -66,29 +67,32 @@ def sshKeygen():
         os.unlink(hostsFile)
 
 
-def incomingConnection(conf, portRemote):
-    route = []
+def route():
     output = subprocess.check_output(["ip", "route", "show"]).decode()
     if 'default via' in output:
         print("Found default route")
+        return []
     else:
-        if args.deviceRegexWhenNoDefaultRoute:
+        if hasattr(args, 'deviceRegexWhenNoDefaultRoute') and args.deviceRegexWhenNoDefaultRoute:
             options = [line for line in output.split("\n")
                     if re.search("dev " + args.deviceRegexWhenNoDefaultRoute, line) is not None]
             if len(options) > 0:
                 line = options[random.randrange(0, len(options))]
                 sourceAddress = re.search(r"src (\d+\.\d+\.\d+\.\d+)", line).group(1)
-                route = ['-b', sourceAddress]
                 print("Attempting to use %s as source address" % sourceAddress)
+                return ['-b', sourceAddress]
             else:
                 raise Exception("No route and no deviceRegexWhenNoDefaultRoute devices")
         else:
             raise Exception("No route")
-    ssh(conf, route + ["-R", "%d:localhost:22" % portRemote])
+
+
+def incomingConnection(conf, portRemote):
+    ssh(conf, route() + ["-R", "%d:localhost:22" % portRemote])
 
 
 def outgoingConnection(conf, portRemote):
-    extra = []
+    extra = route()
     for port in portRemote:
         extra += ['-L', '%d:localhost:%d' % (port, port)]
     ssh(conf, extra)
@@ -199,7 +203,11 @@ elif args.cmd == "incomingService":
     killPreviousSSH(conf)
     if os.path.exists(args.suspendWhilePidLivesFile):
         with open(args.suspendWhilePidLivesFile) as f:
-            pid = int(f.read().strip())
+            pidText = f.read().strip()
+            try:
+                pid = int(pidText)
+            except:
+                pid = "nosuchpid"
         print("Suspended, waiting for PID %s to die" % pid)
         while os.path.exists("/proc/%d" % pid):
             time.sleep(2)
