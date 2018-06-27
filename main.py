@@ -209,7 +209,7 @@ elif args.cmd == "incomingService":
             except:
                 pid = "nosuchpid"
         print("Suspended, waiting for PID %s to die" % pid)
-        while os.path.exists("/proc/%d" % pid):
+        while os.path.exists("/proc/%s" % pid):
             time.sleep(2)
         print("Pid %d died, resuming reversessh" % pid)
         os.unlink(args.suspendWhilePidLivesFile)
